@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Fire Radio Log Ver.3.4</title>
+  <style>
+    :root{
+      --bg:#0f141a;
+      --panel:#151b22;
+      --line:#2c3945;
+      --text:#e9eef4;
+      --muted:#9aa7b4;
+      --blue:#8bdcff;
+      --green:#c9f79b;
+      --red:#ff8c8c;
+      --yellow:#ffd86b;
+      --btn:#394552;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      background:var(--bg);
+      color:var(--text);
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+      padding:14px;
+    }
+    h1{
+      font-size:22px;
+      margin:8px 0 10px;
+      line-height:1.2;
+    }
+    .ver{
+      color:var(--muted);
+      font-size:14px;
+      font-weight:600;
+      margin-left:4px;
+    }
+    .controls{
+      display:flex;
+      flex-wrap:wrap;
+      gap:8px;
+      align-items:center;
+      margin-bottom:10px;
+    }
+    input{
+      flex:1 1 210px;
+      min-width:0;
+      height:38px;
+      border:1px solid var(--line);
+      border-radius:8px;
+      background:#0b1015;
+      color:var(--text);
+      font-size:17px;
+      padding:0 10px;
+    }
+    button{
+      border:0;
+      border-radius:9px;
+      padding:10px 14px;
+      font-weight:800;
+      font-size:16px;
+      color:#101418;
+      white-space:nowrap;
+    }
+    .start{background:var(--blue)}
+    .stop{background:var(--red)}
+    .save{background:var(--green)}
+    .new{background:var(--btn);color:var(--text)}
+    .starBtn{background:var(--yellow)}
+    .status{
+      color:var(--yellow);
+      font-weight:800;
+      min-width:70px;
+    }
+    .hint{
+      color:var(--muted);
+      font-size:13px;
+      margin:2px 0 10px;
+    }
+    .logbox{
+      border:1px solid var(--line);
+      border-radius:12px;
+      background:var(--panel);
+      min-height:64vh;
+      overflow:hidden;
+    }
+    .row{
+      display:grid;
+      grid-template-columns:78px 1fr 34px;
+      gap:8px;
+      align-items:center;
+      min-height:34px;
+      padding:4px 8px;
+      border-bottom:1px solid var(--line);
+      touch-action:pan-y;
+      transition:transform .15s ease, opacity .15s ease;
+    }
+    .time{
+      color:var(--blue);
+      font-size:18px;
+      font-weight:900;
+      letter-spacing:.5px;
+      text-align:right;
+    }
+    .text{
+      font-size:17px;
+      line-height:1.25;
+      word-break:break-word;
+    }
+    .star{
+      color:var(--yellow);
+      font-size:25px;
+      text-align:center;
+      user-select:none;
+    }
+    .urgent .text{
+      color:#ff3b30;
+      font-size:22px;
+      font-weight:1000;
+      letter-spacing:.08em;
+    }
+    .urgent .time{
+      color:#ff3b30;
+    }
+    .request .text{
+      color:#ffd86b;
+      font-weight:900;
+    }
+    .doctor .text{
+      color:#72ffb6;
+      font-weight:900;
+    }
+    .deleted{
+      transform:translateX(-110%);
+      opacity:0;
+    }
+    .small{
+      font-size:12px;
+      color:var(--muted);
+      margin-top:8px;
+      line-height:1.4;
+    }
+  </style>
+</head>
+<body>
+  <h1>🔥 Fire Radio Log <span class="ver">Ver.3.4 / 消防無線補正強化</span></h1>
+
+  <div class="controls">
+    <input id="caseName" placeholder="案件名 例：大田建物火災" />
+    <button class="start" onclick="startRec()">記録開始</button>
+    <button class="stop" onclick="stopRec()">停止</button>
+    <button class="starBtn" onclick="toggleOnlyStar()">最新★</button>
+    <button class="save" onclick="saveCSV()">Excel用保存</button>
+    <button class="save" onclick="saveText()">テキスト保存</button>
+    <button class="new" onclick="newCase()">新規</button>
+    <span class="status" id="status">停止中</span>
+  </div>
+
+  <div class="hint">左スワイプで1行削除。至急・ドクターカー・ドクターヘリ・増隊要請などを強調表示。</div>
+
+  <div class="logbox" id="log"></div>
+
+  <div class="small">
+    ※ 音声認識はスマホ・ブラウザ側の機能です。Ver.3.4では認識後の文字を消防無線向けに自動補正します。
+  </div>
+
+<script>
+let recognition = null;
+let running = false;
+let logs = [];
+let onlyStar = false;
+
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+function nowHHMM(){
+  const d = new Date();
+  return String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+}
+
+function normalizeKana(s){
+  return s
+    .replace(/[ 　]/g,'')
+    .replace(/[。、，,.]/g,'')
+    .replace(/ー/g,'')
+    .toLowerCase();
+}
+
+function correctRadioText(raw){
+  let t = (raw || '').trim();
+  let compact = normalizeKana(t);
+
+  // 1 至急・至急の強力検出
+  const urgentPatterns = [
+    /至急.*至急/,
+    /しきゅう.*しきゅう/,
+    /支給.*支給/,
+    /至球.*至球/,
+    /市急.*市急/,
+    /市九.*市九/,
+    /地球.*地球/,
+    /始球.*始球/,
+    /子宮.*子宮/,
+    /至急至急/,
+    /しきゅうしきゅう/,
+    /支給支給/,
+    /至球至球/,
+    /市九市九/,
+    /地球地球/,
+    /始球式/
+  ];
+  if (urgentPatterns.some(p => p.test(t)) || /(しきゅう|支給|至球|市九|地球|始球).*(しきゅう|支給|至球|市九|地球|始球)/.test(compact)) {
+    t = '至急、至急　' + t
+      .replace(/至急[、, ]*至急/g,'')
+      .replace(/しきゅう[、, ]*しきゅう/g,'')
+      .replace(/支給[、, ]*支給/g,'')
+      .replace(/至球[、, ]*至球/g,'')
+      .replace(/市九[、, ]*市九/g,'')
+      .replace(/地球[、, ]*地球/g,'')
+      .replace(/始球式/g,'')
+      .trim();
+    if(t === '至急、至急') return t;
+  }
+
+  // 2 基本辞書補正
+  const replacements = [
+    [/センターおきなわ/g, 'センター沖縄'],
+    [/せんたー沖縄/g, 'センター沖縄'],
+    [/消防センター沖縄/g, 'センター沖縄'],
+    [/消防しれいセンター/g, '消防指令センター'],
+    [/消防指令せんたー/g, '消防指令センター'],
+    [/消防指令/g, '消防指令'],
+    [/消防しか/g, '消防指令'],
+    [/消防士か/g, '消防指令'],
+    [/消防司会/g, '消防指令'],
+    [/消防しかい/g, '消防指令'],
+
+    [/具志川/g, '具志川'],
+    [/具志川/g, '具志川'],
+    [/ぐしかわ/g, '具志川'],
+    [/串川/g, '具志川'],
+    [/愚志川/g, '具志川'],
+    [/具志川消防/g, '消防具志川'],
+    [/消防具志川/g, '消防具志川'],
+
+    [/石川/g, '石川'],
+    [/いしかわ/g, '石川'],
+    [/石川救急/g, '石川救急'],
+
+    [/平安座/g, '平安座'],
+    [/へんざ/g, '平安座'],
+    [/消防平安座/g, '消防平安座'],
+
+    [/与勝/g, '与勝'],
+    [/よかつ/g, '与勝'],
+
+    [/ポンプ一/g, 'ポンプ1'],
+    [/ポンプいち/g, 'ポンプ1'],
+    [/ポンプ１/g, 'ポンプ1'],
+    [/ポンプに/g, 'ポンプ2'],
+    [/ポンプ二/g, 'ポンプ2'],
+    [/ポンプ２/g, 'ポンプ2'],
+
+    [/救急一/g, '救急1'],
+    [/救急いち/g, '救急1'],
+    [/救急１/g, '救急1'],
+    [/救急に/g, '救急2'],
+    [/救急二/g, '救急2'],
+    [/救急２/g, '救急2'],
+
+    [/出動報告/g, '出動報告'],
+    [/現状報告/g, '現状報告'],
+    [/現着報告/g, '現着報告'],
+    [/増隊要請/g, '増隊要請'],
+    [/応援要請/g, '応援要請'],
+    [/ドクターカー要請/g, 'ドクターカー要請'],
+    [/ドクターヘリ要請/g, 'ドクターヘリ要請'],
+    [/ドクターか/g, 'ドクターカー'],
+    [/ドクターへり/g, 'ドクターヘリ'],
+
+    [/建物火災/g, '建物火災'],
+    [/車両火災/g, '車両火災'],
+    [/林野火災/g, '林野火災'],
+    [/救助事案/g, '救助事案'],
+    [/救急事案/g, '救急事案']
+  ];
+  replacements.forEach(([a,b]) => { t = t.replace(a,b); });
+
+  // 3 よくある無線文の整形
+  t = t.replace(/(.+?)から(.+)/g, '$1から$2');
+  t = t.replace(/消防具志川ポンプ/g, '消防具志川ポンプ');
+  t = t.replace(/消防具志川救急/g, '消防具志川救急');
+
+  // 4 誤認識の強制補正
+  t = t.replace(/始球式消防/g, '至急、至急　消防');
+  t = t.replace(/至球支給/g, '至急、至急');
+  t = t.replace(/支給し/g, '至急');
+  t = t.replace(/具志川ポンプ1から消防しか/g, '具志川ポンプ1から消防指令');
+
+  return t.trim();
+}
+
+function classify(text){
+  const n = normalizeKana(text);
+  if(text.includes('至急、至急') || n.includes('しきゅうしきゅう')) return 'urgent';
+  if(text.includes('ドクターカー') || text.includes('ドクターヘリ')) return 'doctor';
+  if(text.includes('増隊要請') || text.includes('応援要請') || text.includes('要請')) return 'request';
+  return '';
+}
+
+function addLog(raw){
+  const fixed = correctRadioText(raw);
+  if(!fixed) return;
+  logs.unshift({
+    time: nowHHMM(),
+    text: fixed,
+    raw: raw,
+    star: false,
+    cls: classify(fixed)
+  });
+  logs = logs.slice(0,30);
+  render();
+}
+
+function render(){
+  const box = document.getElementById('log');
+  box.innerHTML = '';
+  const list = onlyStar ? logs.filter(x=>x.star) : logs;
+  list.forEach((item, index)=>{
+    const row = document.createElement('div');
+    row.className = 'row ' + item.cls;
+    row.dataset.index = logs.indexOf(item);
+    row.innerHTML = `
+      <div class="time">${item.time}</div>
+      <div class="text">${escapeHtml(item.text)}</div>
+      <div class="star">${item.star ? '★' : '☆'}</div>
+    `;
+
+    row.querySelector('.star').onclick = (e)=>{
+      e.stopPropagation();
+      item.star = !item.star;
+      render();
+    };
+
+    let startX = 0;
+    row.addEventListener('touchstart', e => startX = e.touches[0].clientX, {passive:true});
+    row.addEventListener('touchend', e => {
+      const endX = e.changedTouches[0].clientX;
+      if(startX - endX > 70){
+        const ok = confirm('この行を削除しますか？\n\n' + item.text);
+        if(ok){
+          row.classList.add('deleted');
+          setTimeout(()=>{
+            logs.splice(logs.indexOf(item),1);
+            render();
+          },150);
+        }
+      }
+    }, {passive:true});
+
+    box.appendChild(row);
+  });
+}
+
+function escapeHtml(s){
+  return s.replace(/[&<>"']/g, m => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'
+  }[m]));
+}
+
+function startRec(){
+  if(!SpeechRecognition){
+    alert('このブラウザは音声認識に対応していません。iPhoneの場合はSafariで開いてください。');
+    return;
+  }
+  if(running) return;
+
+  recognition = new SpeechRecognition();
+  recognition.lang = 'ja-JP';
+  recognition.continuous = true;
+  recognition.interimResults = false;
+
+  recognition.onresult = (event)=>{
+    for(let i=event.resultIndex; i<event.results.length; i++){
+      if(event.results[i].isFinal){
+        addLog(event.results[i][0].transcript);
+      }
+    }
+  };
+
+  recognition.onerror = (e)=>{
+    document.getElementById('status').textContent = 'エラー';
+    console.log(e);
+  };
+
+  recognition.onend = ()=>{
+    if(running){
+      try{ recognition.start(); }catch(e){}
+    }
+  };
+
+  running = true;
+  document.getElementById('status').textContent = '記録中';
+  try{ recognition.start(); }catch(e){}
+}
+
+function stopRec(){
+  running = false;
+  document.getElementById('status').textContent = '停止中';
+  if(recognition){
+    try{ recognition.stop(); }catch(e){}
+  }
+}
+
+function toggleOnlyStar(){
+  onlyStar = !onlyStar;
+  render();
+}
+
+function newCase(){
+  const ok = confirm('新規案件を作成しますか？現在のログは消えます。');
+  if(ok){
+    logs = [];
+    document.getElementById('caseName').value = '';
+    render();
+  }
+}
+
+function makeFileName(ext){
+  const name = document.getElementById('caseName').value.trim() || 'FireRadioLog';
+  const d = new Date();
+  const ymd = d.getFullYear() + String(d.getMonth()+1).padStart(2,'0') + String(d.getDate()).padStart(2,'0');
+  return `${name}_${ymd}.${ext}`;
+}
+
+function saveCSV(){
+  const header = ['時刻','内容','重要','元認識'];
+  const rows = logs.slice().reverse().map(x=>[x.time,x.text,x.star?'★':'',x.raw || '']);
+  const csv = [header,...rows].map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+  download('\ufeff' + csv, makeFileName('csv'), 'text/csv');
+}
+
+function saveText(){
+  const text = logs.slice().reverse().map(x=>`${x.time} ${x.star?'★ ':''}${x.text}`).join('\n');
+  download(text, makeFileName('txt'), 'text/plain');
+}
+
+function download(content, filename, type){
+  const blob = new Blob([content], {type});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+render();
+</script>
+</body>
+</html>

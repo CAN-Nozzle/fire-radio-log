@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Fire Radio Log Ver.3</title>
+<style>
+  :root{--bg:#101418;--panel:#171d22;--line:#2f3a43;--text:#e9f0f4;--muted:#9fb0bd;--accent:#5bd3ff;--danger:#ff7070;--ok:#75e08a;--warn:#ffd166;}
+  *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic",sans-serif;}
+  header{display:flex;align-items:center;gap:10px;padding:8px 10px;border-bottom:1px solid var(--line);background:#0d1115;position:sticky;top:0;z-index:2;}
+  h1{font-size:15px;margin:0 10px 0 0;white-space:nowrap}.ver{font-size:10px;color:var(--muted)}
+  input{background:#0b0f13;border:1px solid var(--line);color:var(--text);border-radius:6px;padding:6px;font-size:12px;min-width:170px;}
+  button{border:0;border-radius:7px;padding:7px 10px;font-weight:700;font-size:12px;color:#061014;background:#7ddcff;cursor:pointer;white-space:nowrap;}
+  button.stop{background:#ff8585} button.save{background:#b8e986} button.clear{background:#3b4650;color:#fff} button.mark{background:#ffd166}
+  #status{font-size:12px;color:var(--warn);min-width:70px}.wrap{display:grid;grid-template-columns:1fr 260px;gap:8px;padding:8px;height:calc(100vh - 50px)}
+  #logs{border:1px solid var(--line);background:var(--panel);border-radius:8px;overflow:auto;padding:6px;font-size:12px;line-height:1.22;}
+  .row{display:grid;grid-template-columns:46px 1fr 30px;gap:6px;border-bottom:1px solid #26313a;padding:2px 3px;min-height:20px;align-items:start;}
+  .time{color:var(--accent);font-weight:800;font-variant-numeric:tabular-nums}.text{white-space:pre-wrap;word-break:break-word}.star{color:var(--warn);text-align:center;font-weight:900}.row.important{background:#2b2412}.row.hit{outline:1px solid var(--warn)}
+  aside{border:1px solid var(--line);background:var(--panel);border-radius:8px;padding:8px;overflow:auto;font-size:12px} aside h2{font-size:13px;margin:0 0 6px}.box{border-top:1px solid var(--line);padding-top:8px;margin-top:8px}.small{color:var(--muted);font-size:11px;line-height:1.4}.dict{font-size:11px;color:#c9d6df;line-height:1.55}.search{width:100%;margin:4px 0 8px}.preview{color:var(--muted);border:1px dashed var(--line);border-radius:6px;padding:6px;min-height:38px}
+  @media(max-width:800px){.wrap{grid-template-columns:1fr;height:auto} aside{display:none} header{flex-wrap:wrap} #logs{height:70vh}}
+</style>
+</head>
+<body>
+<header>
+  <h1>🔥 Fire Radio Log <span class="ver">Ver.3 / 30行表示</span></h1>
+  <input id="caseName" placeholder="案件名 例：大田建物火災" />
+  <button onclick="startRec()">記録開始</button>
+  <button class="stop" onclick="stopRec()">停止</button>
+  <button class="mark" onclick="markLatest()">最新★</button>
+  <button class="save" onclick="downloadCSV()">Excel用保存</button>
+  <button class="save" onclick="downloadText()">テキスト保存</button>
+  <button class="clear" onclick="newCase()">新規</button>
+  <span id="status">停止中</span>
+</header>
+<div class="wrap">
+  <main id="logs"></main>
+  <aside>
+    <h2>検索</h2>
+    <input class="search" id="search" placeholder="CAN、救助、鎮圧など" oninput="renderLogs()" />
+    <div class="small">検索語を含む行に枠が付きます。</div>
+    <div class="box">
+      <h2>認識中</h2>
+      <div id="preview" class="preview">ここに途中認識が表示されます</div>
+    </div>
+    <div class="box">
+      <h2>消防用語辞書 Ver.1</h2>
+      <div class="dict" id="dictList"></div>
+    </div>
+    <div class="box small">
+      表示は30行程度を想定。時刻は分まで。Excel用保存では、行ごとに半角スペースを少しずつ足して斜めに流れるように出力します。
+    </div>
+  </aside>
+</div>
+<script>
+let recognition=null;
+let logs=[];
+let running=false;
+const dict=[
+  ["ぐしかわポンプいち","具志川ポンプ1"],["具志川ポンプ市","具志川ポンプ1"],["具志川ポンプ一","具志川ポンプ1"],
+  ["消防串川","消防具志川"],["消防具志がわ","消防具志川"],["しょうぼうぐしかわ","消防具志川"],
+  ["げんちゃく","現着"],["げんちゃく報告","現着報告"],["ちんあつ","鎮圧"],["ちんか","鎮火"],
+  ["かなのずる","CANノズル"],["キャンノズル","CANノズル"],["CAN ノズル","CANノズル"],
+  ["ようきゅうじょしゃ","要救助者"],["よう救助者","要救助者"],["にげおくれ","逃げ遅れ"],
+  ["放水かいし","放水開始"],["屋内しんにゅう","屋内進入"],["検索開始","検索開始"],
+  ["はしごしゃ","はしご車"],["バスケット救助","バスケット救助"],["人員よんめい","人員4名"],
+  ["大田建物火災現状","大田建物火災現場"],["出動ほうこく","出動報告"]
+];
+function nowMin(){const d=new Date();return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');}
+function sanitizeFileName(s){return (s||'無線ログ').replace(/[\\/:*?"<>|]/g,'_').trim()||'無線ログ';}
+function correctText(text){let t=text; dict.forEach(([a,b])=>{t=t.replaceAll(a,b)}); return t.replace(/\s+/g,' ').trim();}
+function addLog(text){const fixed=correctText(text); if(!fixed)return; logs.push({time:nowMin(),text:fixed,important:false}); renderLogs(true); saveLocal();}
+function renderLogs(scrollBottom=false){const q=document.getElementById('search').value.trim(); const el=document.getElementById('logs'); el.innerHTML=''; logs.forEach((r,i)=>{const div=document.createElement('div'); div.className='row'+(r.important?' important':'')+(q&&r.text.includes(q)?' hit':''); div.innerHTML=`<div class="time">${r.time}</div><div class="text">${escapeHtml(r.text)}</div><div class="star" onclick="toggleImportant(${i})">${r.important?'★':'☆'}</div>`; el.appendChild(div);}); if(scrollBottom) el.scrollTop=el.scrollHeight;}
+function escapeHtml(s){return s.replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
+function startRec(){const SR=window.SpeechRecognition||window.webkitSpeechRecognition; if(!SR){alert('このブラウザは音声認識に対応していません。SafariまたはChromeで試してください。');return;} if(running)return; recognition=new SR(); recognition.lang='ja-JP'; recognition.continuous=true; recognition.interimResults=true; running=true; document.getElementById('status').textContent='記録中'; recognition.onresult=e=>{let interim=''; for(let i=e.resultIndex;i<e.results.length;i++){const txt=e.results[i][0].transcript.trim(); if(e.results[i].isFinal){addLog(txt); interim='';} else {interim+=txt;}} document.getElementById('preview').textContent=correctText(interim)||'ここに途中認識が表示されます';}; recognition.onerror=e=>{document.getElementById('status').textContent='エラー:'+e.error;}; recognition.onend=()=>{if(running){try{recognition.start();}catch(e){}}else{document.getElementById('status').textContent='停止中';}}; recognition.start();}
+function stopRec(){running=false; if(recognition)recognition.stop(); document.getElementById('status').textContent='停止中';}
+function toggleImportant(i){logs[i].important=!logs[i].important; renderLogs(); saveLocal();}
+function markLatest(){if(logs.length){logs[logs.length-1].important=true; renderLogs(true); saveLocal();}}
+function newCase(){if(logs.length&&!confirm('現在のログを消して新しい記録を開始しますか？先に保存してください。'))return; logs=[]; document.getElementById('caseName').value=''; renderLogs(); saveLocal();}
+function downloadCSV(){const name=sanitizeFileName(document.getElementById('caseName').value); let csv='案件名,'+csvCell(name)+'\n時刻,内容,重要,斜め表示\n'; logs.forEach((r,i)=>{const indent=' '.repeat(i%18); csv+=`${csvCell(r.time)},${csvCell(r.text)},${r.important?'★':''},${csvCell(indent+r.time+' '+r.text)}\n`;}); download(name+'_Excel用.csv',csv,'text/csv;charset=utf-8;');}
+function downloadText(){const name=sanitizeFileName(document.getElementById('caseName').value); let txt='【'+name+'】\n'; logs.forEach(r=>txt+=`${r.important?'★ ':''}${r.time}　${r.text}\n`); download(name+'_無線ログ.txt',txt,'text/plain;charset=utf-8;');}
+function csvCell(s){return '"'+String(s).replace(/"/g,'""')+'"';}
+function download(file,content,type){const blob=new Blob([content],{type}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=file; a.click(); URL.revokeObjectURL(url);}
+function saveLocal(){localStorage.setItem('frl_v3_logs',JSON.stringify(logs)); localStorage.setItem('frl_v3_case',document.getElementById('caseName').value);}
+function loadLocal(){try{logs=JSON.parse(localStorage.getItem('frl_v3_logs')||'[]'); document.getElementById('caseName').value=localStorage.getItem('frl_v3_case')||'';}catch(e){logs=[]} renderLogs(true);}
+document.getElementById('caseName').addEventListener('input',saveLocal);
+document.getElementById('dictList').innerHTML=dict.slice(0,18).map(x=>x[0]+' → '+x[1]).join('<br>');
+loadLocal();
+</script>
+</body>
+</html>

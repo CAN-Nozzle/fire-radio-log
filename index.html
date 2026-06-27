@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Fire Radio Log Ver.3.6</title>
+  <style>
+    :root{
+      --bg:#0f141a;
+      --panel:#151b22;
+      --line:#2a3540;
+      --text:#eaf0f6;
+      --muted:#9aa7b4;
+      --blue:#8bdcff;
+      --green:#c9f79b;
+      --red:#ff7b7b;
+      --btn:#344150;
+      --yellow:#ffd86b;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      background:var(--bg);
+      color:var(--text);
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+      padding:10px;
+    }
+    h1{
+      font-size:19px;
+      margin:3px 0 7px;
+      line-height:1.2;
+    }
+    .ver{
+      color:var(--muted);
+      font-size:12px;
+      font-weight:600;
+      margin-left:4px;
+    }
+    .controls{
+      display:flex;
+      flex-wrap:wrap;
+      gap:6px;
+      align-items:center;
+      margin-bottom:7px;
+    }
+    input{
+      flex:1 1 170px;
+      min-width:0;
+      height:34px;
+      border:1px solid var(--line);
+      border-radius:7px;
+      background:#0b1015;
+      color:var(--text);
+      font-size:14px;
+      padding:0 8px;
+    }
+    button{
+      border:0;
+      border-radius:8px;
+      padding:8px 10px;
+      font-weight:800;
+      font-size:13px;
+      color:#101418;
+      white-space:nowrap;
+      cursor:pointer;
+    }
+    .start{background:var(--blue)}
+    .stop{background:var(--red)}
+    .save{background:var(--green)}
+    .new,.clear,.decide{background:var(--btn);color:var(--text)}
+    .decide{background:#526579}
+    .clear{background:#4a2f35;color:#ffe4e4}
+    .status{
+      color:var(--yellow);
+      font-weight:800;
+      min-width:56px;
+      font-size:13px;
+    }
+    .caseFixed{
+      color:var(--blue);
+      font-size:12px;
+      font-weight:700;
+      margin:0 0 6px;
+      min-height:16px;
+    }
+    .hint{
+      color:var(--muted);
+      font-size:11px;
+      margin:0 0 6px;
+    }
+    .logbox{
+      border:1px solid var(--line);
+      border-radius:10px;
+      background:var(--panel);
+      min-height:66vh;
+      overflow:hidden;
+    }
+    .row{
+      display:grid;
+      grid-template-columns:56px 1fr 22px;
+      gap:5px;
+      align-items:center;
+      min-height:25px;
+      padding:2px 5px;
+      border-bottom:1px solid var(--line);
+      touch-action:pan-y;
+      transition:transform .12s ease, opacity .12s ease;
+    }
+
+    /* 時系列を少しずらして斜め表示 */
+    .row.stagger1{ margin-left:0px; }
+    .row.stagger2{ margin-left:8px; }
+    .row.stagger3{ margin-left:16px; }
+    .row.stagger4{ margin-left:24px; }
+
+    .time{
+      color:var(--blue);
+      font-size:14px;
+      font-weight:900;
+      letter-spacing:.2px;
+      text-align:right;
+    }
+    .text{
+      font-size:14px;
+      line-height:1.18;
+      word-break:break-word;
+    }
+    .xbtn{
+      color:#c9d1da;
+      font-size:13px;
+      text-align:center;
+      user-select:none;
+      cursor:pointer;
+      opacity:.75;
+      line-height:1;
+      padding:4px 0;
+    }
+    .xbtn:hover{opacity:1}
+    .urgent .text{
+      color:#ff4d4d;
+      font-size:14px;
+      font-weight:700;
+    }
+    .urgent .time{
+      color:#ff4d4d;
+    }
+    .request .text{
+      color:var(--yellow);
+      font-weight:700;
+    }
+    .doctor .text{
+      color:#72ffb6;
+      font-weight:700;
+    }
+    .deleted{
+      transform:translateX(-105%);
+      opacity:0;
+    }
+    .undo{
+      position:fixed;
+      left:12px;
+      right:12px;
+      bottom:12px;
+      background:#202a33;
+      color:var(--text);
+      border:1px solid var(--line);
+      border-radius:9px;
+      padding:9px 11px;
+      display:none;
+      justify-content:space-between;
+      align-items:center;
+      font-size:13px;
+      z-index:10;
+    }
+    .undo button{
+      background:#dce7f0;
+      padding:6px 10px;
+      font-size:12px;
+    }
+    .small{
+      font-size:11px;
+      color:var(--muted);
+      margin-top:6px;
+      line-height:1.4;
+    }
+  </style>
+</head>
+<body>
+  <h1>🔥 Fire Radio Log <span class="ver">Ver.3.6</span></h1>
+
+  <div class="controls">
+    <input id="caseName" placeholder="案件名 例：大田建物火災" />
+    <button class="decide" onclick="decideCaseName()">決定</button>
+    <button class="start" onclick="startRec()">記録開始</button>
+    <button class="stop" onclick="stopRec()">停止</button>
+    <button class="save" onclick="saveCSV()">Excel保存</button>
+    <button class="clear" onclick="clearAll()">全削除</button>
+    <button class="new" onclick="newCase()">新規記録開始</button>
+    <span class="status" id="status">停止中</span>
+  </div>
+
+  <div class="caseFixed" id="caseFixed">案件名：未決定</div>
+  <div class="hint">右端の×で即削除。スマホは左スワイプでも削除。ログは最大30行。</div>
+
+  <div class="logbox" id="log"></div>
+
+  <div class="small">
+    ※ Ver.3.6：文字サイズ縮小／斜め時系列表示復活／決定・全削除・新規記録開始ボタン追加。
+  </div>
+
+  <div class="undo" id="undo">
+    <span>1件削除しました</span>
+    <button onclick="undoDelete()">元に戻す</button>
+  </div>
+
+<script>
+let recognition = null;
+let running = false;
+let logs = [];
+let lastDeleted = null;
+let undoTimer = null;
+let fixedCaseName = '';
+
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+function nowHHMM(){
+  const d = new Date();
+  return String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+}
+
+function normalize(s){
+  return (s || '')
+    .replace(/[ 　]/g,'')
+    .replace(/[。、，,.]/g,'')
+    .replace(/ー/g,'')
+    .toLowerCase();
+}
+
+function correctRadioText(raw){
+  let t = (raw || '').trim();
+  if(!t) return '';
+
+  const n = normalize(t);
+
+  const urgentDouble = /(至急.*至急|しきゅう.*しきゅう|支給.*支給|至球.*至球|市九.*市九|地球.*支給|地球.*地球|始球.*支給|始球式)/;
+  if (urgentDouble.test(t) || urgentDouble.test(n)) {
+    t = t
+      .replace(/至急[、, ]*至急/g,'')
+      .replace(/しきゅう[、, ]*しきゅう/g,'')
+      .replace(/支給[、, ]*支給/g,'')
+      .replace(/至球[、, ]*至球/g,'')
+      .replace(/市九[、, ]*市九/g,'')
+      .replace(/地球[、, ]*支給/g,'')
+      .replace(/地球[、, ]*地球/g,'')
+      .replace(/始球式/g,'')
+      .trim();
+    t = t ? '至急、至急　' + t : '至急、至急';
+  }
+
+  const badShika = /(消防しか|消防士か|消防歯科|消防司会|消防しかい|消防師か|消防師会)/g;
+
+  if (/具志川|ぐしか|グシカ|愚志川|串川/.test(t) && badShika.test(t)) t = t.replace(badShika, '消防具志川');
+  badShika.lastIndex = 0;
+  if (/石川|いしかわ/.test(t) && badShika.test(t)) t = t.replace(badShika, '消防石川');
+  badShika.lastIndex = 0;
+  if (/平安座|へんざ/.test(t) && badShika.test(t)) t = t.replace(badShika, '消防平安座');
+  badShika.lastIndex = 0;
+  if (/与勝|よかつ/.test(t) && badShika.test(t)) t = t.replace(badShika, '消防与勝');
+
+  const reps = [
+    [/ぐしかわ/g, '具志川'], [/グシカワ/g, '具志川'], [/グシカ/g, '具志川'],
+    [/ぐしか/g, '具志川'], [/愚志川/g, '具志川'], [/串川/g, '具志川'],
+    [/具志川消防/g, '消防具志川'],
+    [/いしかわ/g, '石川'], [/へんざ/g, '平安座'], [/よかつ/g, '与勝'],
+    [/センターおきなわ/g, 'センター沖縄'], [/せんたー沖縄/g, 'センター沖縄'],
+    [/指令センター/g, '消防指令センター'], [/指令室/g, '消防指令センター'],
+    [/消防指令センター/g, '消防指令センター'],
+    [/ポンプ一/g, 'ポンプ1'], [/ポンプいち/g, 'ポンプ1'], [/ポンプ１/g, 'ポンプ1'],
+    [/ポンプに/g, 'ポンプ2'], [/ポンプ二/g, 'ポンプ2'], [/ポンプ２/g, 'ポンプ2'],
+    [/救急一/g, '救急1'], [/救急いち/g, '救急1'], [/救急１/g, '救急1'],
+    [/救急に/g, '救急2'], [/救急二/g, '救急2'], [/救急２/g, '救急2'],
+    [/ドクターか/g, 'ドクターカー'], [/ドクターへり/g, 'ドクターヘリ']
+  ];
+  reps.forEach(([a,b]) => { t = t.replace(a,b); });
+
+  t = t.replace(badShika, '消防具志川');
+
+  t = t.replace(/具志川ポンプ1から消防指令/g, '具志川ポンプ1から消防具志川');
+  t = t.replace(/具志川ポンプ2から消防指令/g, '具志川ポンプ2から消防具志川');
+  t = t.replace(/具志川救急1から消防指令/g, '具志川救急1から消防具志川');
+  t = t.replace(/石川救急1から消防指令/g, '石川救急1から消防石川');
+  t = t.replace(/平安座ポンプ1から消防指令/g, '平安座ポンプ1から消防平安座');
+  t = t.replace(/与勝ポンプ1から消防指令/g, '与勝ポンプ1から消防与勝');
+
+  t = t.replace(/支給/g, '至急').replace(/至球/g, '至急').replace(/市九/g, '至急').replace(/地球/g, '至急');
+
+  return t.trim();
+}
+
+function classify(text){
+  const n = normalize(text);
+  if(text.includes('至急、至急') || n.includes('しきゅうしきゅう')) return 'urgent';
+  if(text.includes('ドクターカー') || text.includes('ドクターヘリ')) return 'doctor';
+  if(text.includes('増隊要請') || text.includes('応援要請') || text.includes('要請')) return 'request';
+  return '';
+}
+
+function decideCaseName(){
+  fixedCaseName = document.getElementById('caseName').value.trim();
+  document.getElementById('caseFixed').textContent = fixedCaseName ? '案件名：' + fixedCaseName : '案件名：未決定';
+}
+
+function addLog(raw){
+  const fixed = correctRadioText(raw);
+  if(!fixed) return;
+  logs.unshift({
+    time: nowHHMM(),
+    text: fixed,
+    raw: raw,
+    cls: classify(fixed)
+  });
+  logs = logs.slice(0,30);
+  render();
+}
+
+function deleteLog(item){
+  const idx = logs.indexOf(item);
+  if(idx < 0) return;
+  lastDeleted = { item, idx };
+  logs.splice(idx,1);
+  render();
+  showUndo();
+}
+
+function showUndo(){
+  const el = document.getElementById('undo');
+  el.style.display = 'flex';
+  clearTimeout(undoTimer);
+  undoTimer = setTimeout(()=>{
+    el.style.display = 'none';
+    lastDeleted = null;
+  }, 3000);
+}
+
+function undoDelete(){
+  if(lastDeleted){
+    logs.splice(lastDeleted.idx, 0, lastDeleted.item);
+    lastDeleted = null;
+    render();
+  }
+  document.getElementById('undo').style.display = 'none';
+}
+
+function render(){
+  const box = document.getElementById('log');
+  box.innerHTML = '';
+  logs.forEach((item, i)=>{
+    const row = document.createElement('div');
+    row.className = 'row ' + item.cls + ' stagger' + ((i % 4) + 1);
+    row.innerHTML = `
+      <div class="time">${item.time}</div>
+      <div class="text">${escapeHtml(item.text)}</div>
+      <div class="xbtn" title="削除">×</div>
+    `;
+
+    row.querySelector('.xbtn').onclick = (e)=>{
+      e.stopPropagation();
+      deleteLog(item);
+    };
+
+    let startX = 0;
+    row.addEventListener('touchstart', e => startX = e.touches[0].clientX, {passive:true});
+    row.addEventListener('touchend', e => {
+      const endX = e.changedTouches[0].clientX;
+      if(startX - endX > 70){
+        row.classList.add('deleted');
+        setTimeout(()=>deleteLog(item),120);
+      }
+    }, {passive:true});
+
+    box.appendChild(row);
+  });
+}
+
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, m => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'
+  }[m]));
+}
+
+function startRec(){
+  decideCaseName();
+
+  if(!SpeechRecognition){
+    alert('このブラウザは音声認識に対応していません。iPhoneの場合はSafariで開いてください。');
+    return;
+  }
+  if(running) return;
+
+  recognition = new SpeechRecognition();
+  recognition.lang = 'ja-JP';
+  recognition.continuous = true;
+  recognition.interimResults = false;
+
+  recognition.onresult = (event)=>{
+    for(let i=event.resultIndex; i<event.results.length; i++){
+      if(event.results[i].isFinal){
+        addLog(event.results[i][0].transcript);
+      }
+    }
+  };
+
+  recognition.onerror = (e)=>{
+    document.getElementById('status').textContent = 'エラー';
+    console.log(e);
+  };
+
+  recognition.onend = ()=>{
+    if(running){
+      try{ recognition.start(); }catch(e){}
+    }
+  };
+
+  running = true;
+  document.getElementById('status').textContent = '記録中';
+  try{ recognition.start(); }catch(e){}
+}
+
+function stopRec(){
+  running = false;
+  document.getElementById('status').textContent = '停止中';
+  if(recognition){
+    try{ recognition.stop(); }catch(e){}
+  }
+}
+
+function clearAll(){
+  const ok = confirm('ログを全削除しますか？案件名は残ります。');
+  if(ok){
+    logs = [];
+    lastDeleted = null;
+    document.getElementById('undo').style.display = 'none';
+    render();
+  }
+}
+
+function newCase(){
+  const ok = confirm('新規記録を開始しますか？現在のログと案件名は消えます。');
+  if(ok){
+    stopRec();
+    logs = [];
+    lastDeleted = null;
+    fixedCaseName = '';
+    document.getElementById('caseName').value = '';
+    document.getElementById('caseFixed').textContent = '案件名：未決定';
+    document.getElementById('undo').style.display = 'none';
+    render();
+  }
+}
+
+function safeFileName(name){
+  return name.replace(/[\\/:*?"<>|]/g, '_');
+}
+
+function makeFileName(ext){
+  const inputName = document.getElementById('caseName').value.trim();
+  const name = fixedCaseName || inputName || 'FireRadioLog';
+  const d = new Date();
+  const ymd = d.getFullYear() + String(d.getMonth()+1).padStart(2,'0') + String(d.getDate()).padStart(2,'0');
+  return `${safeFileName(name)}_${ymd}.${ext}`;
+}
+
+function saveCSV(){
+  decideCaseName();
+  const header = ['時刻','内容','元認識'];
+  const rows = logs.slice().reverse().map(x=>[x.time,x.text,x.raw || '']);
+  const csv = [header,...rows].map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+  download('\ufeff' + csv, makeFileName('csv'), 'text/csv');
+}
+
+function download(content, filename, type){
+  const blob = new Blob([content], {type});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+render();
+</script>
+</body>
+</html>
